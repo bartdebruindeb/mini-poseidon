@@ -1,4 +1,4 @@
-extensions [ csv ]                 ; needed to load Behaviorsearch results
+extensions [ csv profiler ]                 ; needed to load Behaviorsearch results
 
 globals [ fishable-patches ]       ; agentset of fishable patches
 breed [ xs x ]                     ; use to mark location of protected area
@@ -39,23 +39,95 @@ to setup
   reset-ticks
 end
 
+
+to setup-mpa
+  ask xs [die]
+  set-default-shape xs "x"
+  ask max-n-of 20 patches [biomass] [
+    sprout-xs 1 [set color [0 0 0 50]]
+  ]
+  set fishable-patches patches with [ not any? xs-here]
+end
 to go
-  tick
+  if ticks mod (365 * 24) = 0 [setup-mpa]
+  ask fishers [
+    set trip-costs trip-costs + hourly-costs
+    ifelse patch-here = current-destination [
+      ifelse any? ports-here [dock] [fish]
+    ][
+      face current-destination
+      forward speed
+    ]
+  ]
+  update-biology
+  tick-advance 1
+  if update-plots? [update-plots]
 end
 
 to update-biology
+  diffuse biomass diffusion-rate
+  recolor-patches
+  if ticks mod (15 * 24) = 0 [ ; every 15 years
+    ask patches [
+      set biomass biomass + (
+        growth-rate * biomass * (1 - (biomass / carrying-capacity))
+        )
+    ]
+  ]
 end
 
 to pick-destination ; fisher procedure
+  ifelse random-float 1 < exploration-probability [
+    ; explore;
+    let r 1 + random-poisson exploration-radius
+    set trip-destination [ one-of fishable-patches in-radius r] of favourite-destination
+  ][
+    let other-fisher one-of other fishers
+    let their-profits [profits-at-favourite-destination] of other-fisher
+    ifelse profits-at-favourite-destination >= their-profits [
+      ; epxloit
+      set trip-destination favourite-destination
+    ][
+      ; imitate
+      set trip-destination [ favourite-destination] of other-fisher
+    ]
+  ]
+  set current-destination trip-destination
 end
 
 to dock ; fisher procedure
+  let revenues biomass-in-hold * price-of-fish
+  set biomass-in-hold 0
+  let profits revenues - trip-costs
+  set trip-costs 0
+  set bank-balance bank-balance + profits
+  (ifelse
+    trip-destination = favourite-destination [
+      set profits-at-favourite-destination profits
+    ]
+    profits > profits-at-favourite-destination [
+      set favourite-destination trip-destination
+      set profits-at-favourite-destination profits
+    ]
+    )
+  if [any? xs-here] of favourite-destination [
+    set favourite-destination min-one-of fishable-patches [
+      distance [favourite-destination] of myself
+    ]
+  ]
+  pick-destination
 end
 
 to fish ; fisher procedure
+  set pcolor red
+  let biomass-caught biomass * catchability
+  set biomass biomass - biomass-caught
+  set biomass-in-hold biomass-in-hold + biomass-caught
+  set current-destination [ patch-here] of one-of ports
 end
 
 to recolor-patches
+  ask patches [set pcolor scale-color blue (biomass / 2) carrying-capacity 0]
 end
 
 to reset-parameters
@@ -73,6 +145,17 @@ to reset-parameters
   set max-mpa-x 0
   set min-mpa-y min-pycor
   set max-mpa-y max-pycor
+end
+
+
+to profile
+  setup
+  profiler:start
+  repeat 365 * 24 * 4 [go]
+  profiler:stop
+  print profiler:report
+  csv:to-file "profiler_data.csv"profiler:data
+  profiler:reset
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
@@ -173,7 +256,7 @@ price-of-fish
 price-of-fish
 0
 500
-80.0
+172.0
 1
 1
 £/T
@@ -360,7 +443,7 @@ min-mpa-x
 min-mpa-x
 min-pxcor
 max-pxcor
-5.0
+-2.0
 1
 1
 NIL
@@ -474,6 +557,34 @@ Fleet
 12
 0.0
 1
+
+BUTTON
+150
+100
+217
+133
+NIL
+profile\n
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
+
+SWITCH
+300
+60
+422
+93
+update-plots?
+update-plots?
+0
+1
+-1000
 
 @#$#@#$#@
 ## WHAT IS IT?
